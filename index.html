@@ -33,7 +33,7 @@
       background: radial-gradient(60% 80% at 50% 50%, transparent 40%, rgba(0,0,0,.35));
     }
 
-    #display{position:absolute; inset:0; width:100%; height:100%; display:block; background:#000;}
+    #display{position:absolute; inset:0; width:100%; height:100%; display:block; background: var(--userBg, #000);}
     #blooms{position:absolute; inset:0; pointer-events:none;}
 
     .status{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
@@ -84,6 +84,8 @@
   <div class="app" id="app">
     <div class="stage" id="stage" aria-label="Camera stage">
       <canvas id="display"></canvas>
+      <canvas id="buffer" width="0" height="0" style="display:none"></canvas>
+      <canvas id="buffer" width="0" height="0" style="display:none"></canvas>
       <div id="blooms" aria-hidden="true"></div>
       <div id="status" class="status"><span class="dot"></span> <span id="statusText">Requesting camera…</span></div>
     </div>
@@ -135,9 +137,20 @@
           <input id="blur" type="range" min="0" max="3" value="1" step="1" />
           <output id="blurOut">1px</output>
         </div>
+        <div class="group">
+          <label for="bgcolor">Background color</label>
+          <input id="bgcolor" type="color" value="#000000" />
+          <output id="bgcolorOut">#000000</output>
+        </div>
+        <div class="group">
+          <label for="bgcolor">Background color</label>
+          <input id="bgcolor" type="color" value="#000000" />
+          <output id="bgcolorOut">#000000</output>
+        </div>
       </div>
       <div class="buttons">
-        <button id="toggleMirror" class="btn" aria-pressed="true">Mirror: On</button>
+        <button id="toggleMirror" class="btn" aria-pressed="true">Mirror: On<\/button>
+        <button id="toggleCam" class="btn" aria-pressed="true">Camera: On<\/button>
         <button id="togglePause" class="btn" aria-pressed="false">Pause</button>
         <button id="clearBtn" class="btn">Clear</button>
         <button id="hideUiBtn" class="btn">Hide UI</button>
@@ -158,6 +171,8 @@
     const stage = document.getElementById('stage');
     const canvas = document.getElementById('display');
     const ctx = canvas.getContext('2d', { willReadFrequently:true });
+    const buffer = document.getElementById('buffer');
+    const bctx = buffer.getContext('2d', { willReadFrequently:true });
     const blooms = document.getElementById('blooms');
     const statusBox = document.getElementById('status');
     const statusText = document.getElementById('statusText');
@@ -173,7 +188,11 @@
       radius: bindSlider('radius','radiusOut', v=>v+"px"),
       fps: bindSlider('fps','fpsOut', v=>v),
       blur: bindSlider('blur','blurOut', v=>v+"px"),
+      bgcolor: bindColor('bgcolor','bgcolorOut'),
+      bgcolor: bindColor('bgcolor','bgcolorOut'),
       mirrorBtn: document.getElementById('toggleMirror'),
+      camBtn: document.getElementById('toggleCam'),
+      camBtn: document.getElementById('toggleCam'),
       pauseBtn: document.getElementById('togglePause'),
       clearBtn: document.getElementById('clearBtn'),
       hideUiBtn: document.getElementById('hideUiBtn'),
@@ -185,6 +204,10 @@
     // State
     let mirror = true;
     let running = true;
+    let camOn = true;
+    let stream = null;
+    let camOn = true;
+    let stream = null;
     let lastFrame = null; // ImageData
     let lastTick = 0;
     let aspect = 16/9;
@@ -201,6 +224,17 @@
     controls.pauseBtn.addEventListener('click', ()=>{
       running = !running; controls.pauseBtn.textContent = running? 'Pause':'Resume';
       controls.pauseBtn.setAttribute('aria-pressed', String(!running));
+    });
+    controls.camBtn.addEventListener('click', async ()=>{
+      if(camOn){
+        stopCamera();
+        controls.camBtn.textContent = 'Camera: Off';
+        controls.camBtn.setAttribute('aria-pressed','false');
+      } else {
+        await startCamera();
+        controls.camBtn.textContent = 'Camera: On';
+        controls.camBtn.setAttribute('aria-pressed','true');
+      }
     });
     controls.clearBtn.addEventListener('click', clearBlooms);
     controls.hideUiBtn.addEventListener('click', ()=>{
@@ -227,23 +261,28 @@
       const w = Math.floor(rect.width), h = Math.floor(rect.height);
       if(canvas.width !== w || canvas.height !== h){
         canvas.width = w; canvas.height = h;
+        buffer.width = w; buffer.height = h;
       }
+    }
+    }
     }
 
     // Init camera
-    (async function init(){
+    async function startCamera(){
       if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
         showStatus('getUserMedia not supported in this browser');
+        camOn = false;
         return;
       }
       showStatus('Requesting camera…');
       try{
-        const stream = await navigator.mediaDevices.getUserMedia({
+        stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: false
         });
         video.srcObject = stream;
         await video.play();
+        camOn = true;
         aspect = video.videoWidth && video.videoHeight ? (video.videoWidth / video.videoHeight) : 16/9;
         stage.style.aspectRatio = aspect.toFixed(4);
         hideStatus();
@@ -251,225 +290,19 @@
         requestAnimationFrame(tick);
       }catch(err){
         console.error(err);
+        camOn = false;
         showStatus('Camera error: ' + (err.message || err.name || err));
       }
-    })();
-
-    function showStatus(msg){ statusText.textContent = msg; statusBox.classList.add('show'); }
-    function hideStatus(){ statusBox.classList.remove('show'); }
-
-    // Main loop
-    function tick(ts){
-      const targetDelta = 1000 / Number(controls.fps.value);
-      if(ts - lastTick < targetDelta){ return requestAnimationFrame(tick); }
-      lastTick = ts;
-
-      const w = canvas.width, h = canvas.height;
-
-      // Draw current video frame onto canvas (with optional mirror and smoothing)
-      ctx.save();
-      ctx.clearRect(0,0,w,h);
-      if(Number(controls.blur.value) > 0){ ctx.filter = `blur(${Number(controls.blur.value)}px)`; }
-      if(mirror){ ctx.translate(w,0); ctx.scale(-1,1); }
-
-      // cover draw
-      const vw = video.videoWidth || 1280;
-      const vh = video.videoHeight || 720;
-      const scale = Math.max(w / vw, h / vh);
-      const dw = vw * scale; const dh = vh * scale; const dx = (w - dw) / 2; const dy = (h - dh) / 2;
-      ctx.drawImage(video, dx, dy, dw, dh);
-      ctx.restore();
-      ctx.filter = 'none';
-
-      if(running){ detectAndBloom(w, h); }
-
-      requestAnimationFrame(tick);
     }
-
-    function detectAndBloom(w, h){
-      let current;
-      try{ current = ctx.getImageData(0,0,w,h); } catch(e){ return; }
-      if(lastFrame){
-        const data1 = current.data; const data0 = lastFrame.data;
-        const step = Number(controls.step.value) | 0;
-        const threshold = Number(controls.sensitivity.value) | 0;
-        const maxPer = Number(controls.maxPerFrame.value) | 0;
-        const density = Number(controls.density.value) / 100;
-        let spawned = 0;
-
-        for(let y=0; y<h && spawned < maxPer; y+=step){
-          const rowIndex = y*w*4;
-          for(let x=0; x<w && spawned < maxPer; x+=step){
-            const i = rowIndex + x*4;
-            const dr = Math.abs(data1[i] - data0[i]);
-            const dg = Math.abs(data1[i+1] - data0[i+1]);
-            const db = Math.abs(data1[i+2] - data0[i+2]);
-            const d = dr + dg + db;
-            if(d > threshold){
-              if(Math.random() < density){
-                const { px, py } = jitter(x, y);
-                spawnFlower(px, py);
-                spawned++;
-              }
-            }
-          }
-        }
-      }
-      lastFrame = current;
-    }
-
-    function jitter(x, y){
-      const radius = Number(controls.radius.value) || 0;
-      if(radius <= 0) return { px:x, py:y };
-      const a = Math.random()*Math.PI*2; const r = Math.random()*radius;
-      let px = x + Math.cos(a)*r; let py = y + Math.sin(a)*r;
-      // clamp to canvas
-      px = Math.max(0, Math.min(canvas.width, px));
-      py = Math.max(0, Math.min(canvas.height, py));
-      return { px, py };
-    }
-
-    // Flower system
-    const MAX_DOM_FLOWERS = 500;
-
-    function spawnFlower(x, y){
-      const size = Number(controls.size.value);
-      const life = Number(controls.lifetime.value);
-      const el = document.createElement('div');
-      el.className = 'flower';
-      el.style.left = x + 'px';
-      el.style.top = y + 'px';
-      el.style.width = size + 'px';
-      el.style.height = size + 'px';
-      el.style.setProperty('--life', life+'s');
-      el.style.setProperty('--rot', (Math.random()*360).toFixed(1)+'deg');
-      el.innerHTML = randomFlowerSVG();
-      blooms.appendChild(el);
-
-      // cap DOM nodes
-      if(blooms.childElementCount > MAX_DOM_FLOWERS){
-        blooms.firstElementChild?.remove();
-      }
-      // auto remove
-      setTimeout(()=>{ el.remove(); }, (life*1000) + 80);
-    }
-
-    function clearBlooms(){ blooms.innerHTML = ''; }
-
-    function bindSlider(id, outId, fmt){
-      const el = document.getElementById(id);
-      const out = document.getElementById(outId);
-      const save = ()=>{
-        localStorage.setItem('mbc_'+id, el.value);
-      };
-      const stored = localStorage.getItem('mbc_'+id);
-      if(stored !== null){ el.value = stored; }
-      const update = ()=>{ out.textContent = fmt(el.value); save(); };
-      el.addEventListener('input', update);
-      update();
-      return el;
-    }
-
-    function restoreSettings(){
+    function stopCamera(){
       try{
-        const m = localStorage.getItem('mbc_mirror');
-        if(m !== null){ mirror = m === '1'; }
-        document.getElementById('toggleMirror').textContent = `Mirror: ${mirror? 'On':'Off'}`;
-      }catch{}
-      window.addEventListener('beforeunload', ()=>{
-        try{ localStorage.setItem('mbc_mirror', mirror ? '1':'0'); }catch{}
-      });
+        if(stream){ stream.getTracks().forEach(t=>t.stop()); }
+      }catch(e){}
+      video.srcObject = null;
+      camOn = false;
+      showStatus('Camera off');
     }
-
-    // --------- Pretty SVG Flowers ---------
-    function randomFlowerSVG(){
-      const pick = Math.random();
-      if(pick < .17) return svgDaisy();
-      if(pick < .34) return svgSunflower();
-      if(pick < .50) return svgCherry();
-      if(pick < .66) return svgLotus();
-      if(pick < .83) return svgTulip();
-      return svgRose();
-    }
-
-    function svgWrap(inner){
-      return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${inner}</svg>`;
-    }
-
-    function svgDaisy(){
-      const petal = (r, i, n, color)=>`<ellipse cx="50" cy="30" rx="8" ry="20" fill="${color}" transform="rotate(${(i*360/n).toFixed(1)} 50 50) translate(0 ${r})"/>`;
-      const n=14, r=8; const petals = Array.from({length:n}, (_,i)=>petal(r,i,n,randPastel())) .join('');
-      const center = `<circle cx="50" cy="50" r="12" fill="#f9d15b" stroke="#caa746" stroke-width="2"/>`;
-      return svgWrap(`<g>${petals}${center}</g>`);
-    }
-
-    function svgSunflower(){
-      const n=22; const petals = Array.from({length:n}, (_,i)=>{
-        return `<path d="M50 18 C53 22,57 30,50 36 C43 30,47 22,50 18 Z" fill="#f4c430" transform="rotate(${(i*360/n).toFixed(1)} 50 50)"/>`;
-      }).join('');
-      const center = `<circle cx="50" cy="50" r="15" fill="#3b2d1f"/><circle cx="50" cy="50" r="10" fill="#5a452e" opacity=".6"/>`;
-      return svgWrap(`<g>${petals}${center}</g>`);
-    }
-
-    function svgCherry(){
-      const petal = (deg)=>`<path d="M50 30 C40 30,35 45,50 55 C65 45,60 30,50 30 Z" fill="${randPink()}" transform="rotate(${deg} 50 50)"/>`;
-      const dots = `<circle cx="50" cy="50" r="3" fill="#fefefe" opacity=".7"/>`;
-      const core = `<circle cx="50" cy="50" r="5" fill="#6b3d3d"/>`;
-      const petals = [0,72,144,216,288].map(petal).join('');
-      return svgWrap(`<g>${petals}${core}${dots}</g>`);
-    }
-
-    function svgLotus(){
-      const petal=(s,dy,rot,fill)=>`<path d="M50 ${40-dy} C 45 ${35-dy}, 40 ${50-dy}, 50 ${60-dy} C 60 ${50-dy}, 55 ${35-dy}, 50 ${40-dy} Z" fill="${fill}" transform="rotate(${rot} 50 50) scale(${s}) translate(${50-50*s} ${50-50*s})" opacity="0.9"/>`;
-      const colors=[randPastel(), randPastel(), randPastel()];
-      const inner = [
-        petal(1.2, 0, 0, colors[0]) + petal(1.2,0,60,colors[0]) + petal(1.2,0,120,colors[0]),
-        petal(1.0, 4, 30, colors[1]) + petal(1.0,4,90,colors[1]) + petal(1.0,4,150,colors[1]),
-        petal(0.8, 8, 0, colors[2]) + petal(0.8,8,60,colors[2]) + petal(0.8,8,120,colors[2])
-      ].join('');
-      const center = `<circle cx="50" cy="55" r="6" fill="#ffd78e"/>`;
-      return svgWrap(`<g>${inner}${center}</g>`);
-    }
-
-    function svgTulip(){
-      const stem = `<rect x="48" y="55" width="4" height="25" fill="#3fa34d"/>`;
-      const leaf = `<path d="M52 70 C70 60,65 85,52 82 Z" fill="#48b15a" opacity=".85"/>`;
-      const cup = `<path d="M35 58 C42 40,47 38,50 45 C53 38,58 40,65 58 C60 70,40 70,35 58 Z" fill="${randWarm()}"/>`;
-      return svgWrap(`<g>${stem}${leaf}${cup}</g>`);
-    }
-
-    function svgRose(){
-      const swirl = `<path d="M50 35 c-8 0 -15 6 -15 14 c0 10 12 18 18 12 c2 -2 1 -5 -2 -6 c-5 -1 -8 -6 -7 -10 c1 -6 7 -9 13 -8 c7 2 10 10 8 16 c-3 9 -14 12 -22 8" fill="none" stroke="${randRose()}" stroke-width="6" stroke-linecap="round"/>`;
-      const base = `<circle cx="50" cy="50" r="16" fill="${randRose(0.6)}" opacity=".35"/>`;
-      const hints = `<circle cx="42" cy="46" r="2" fill="#fff" opacity=".5"/><circle cx="58" cy="56" r="1.6" fill="#fff" opacity=".4"/>`;
-      return svgWrap(`<g>${base}${swirl}${hints}</g>`);
-    }
-
-    // Color helpers
-    function randPastel(){
-      const hues=[200,220,250,280,310,340,20,40,140];
-      const h=hues[(Math.random()*hues.length)|0];
-      const s=70+Math.random()*20, l=70+Math.random()*10;
-      return `hsl(${h} ${s}% ${l}%)`;
-    }
-    function randPink(){
-      const h = 320 + Math.random()*30; const s = 70 + Math.random()*20; const l = 65 + Math.random()*10; return `hsl(${h} ${s}% ${l}%)`;
-    }
-    function randWarm(){
-      const hues=[0,10,15,20,25,30,35]; const h=hues[(Math.random()*hues.length)|0]; const s=70+Math.random()*20; const l=55+Math.random()*15; return `hsl(${h} ${s}% ${l}%)`;
-    }
-    function randRose(alpha){
-      const h = 350 + Math.random()*20; const s = 60 + Math.random()*25; const l = 48 + Math.random()*10; const c = `hsl(${h} ${s}% ${l}%)`; return c;
-    }
-
-    // Keyboard helpers
-    window.addEventListener('keydown', (e)=>{
-      if(e.key.toLowerCase() === 'm'){ controls.mirrorBtn.click(); }
-      if(e.key.toLowerCase() === 'u'){ controls.hideUiBtn.click(); }
-      if(e.key === ' '){ e.preventDefault(); controls.pauseBtn.click(); }
-      if(e.key.toLowerCase() === 'f'){ controls.fsBtn.click(); }
-    });
-  })();
+    startCamera();
   </script>
 </body>
 </html>
