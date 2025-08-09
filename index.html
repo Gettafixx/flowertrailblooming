@@ -39,7 +39,7 @@
     .status{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
       background:linear-gradient(180deg, #14203b, #0e162e); border:1px solid #243154; color:var(--text);
       padding:14px 16px; border-radius:14px; box-shadow:var(--shadow); font-size:14px; display:none;}
-    .status.show{display:flex; align-items:center; gap:10px}
+    .status.show{display:flex; align-items:center; gap:10px; cursor:pointer}
     .status .dot{width:10px;height:10px;border-radius:50%;background:#7dd3fc; box-shadow:0 0 18px #7dd3fc99}
 
     .ui{position:relative; z-index:3; display:flex; flex-direction:column; gap:10px;}
@@ -229,6 +229,11 @@
     controls.camBtn.addEventListener('click', async ()=>{
       if(camOn){
         stopCamera();
+      } else {
+        await startCamera();
+      }
+      updateCamBtn();
+    });
         controls.camBtn.textContent = 'Camera: Off';
         controls.camBtn.setAttribute('aria-pressed','false');
       } else {
@@ -270,39 +275,62 @@
 
     // Init camera
     async function startCamera(){
-      if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-        showStatus('getUserMedia not supported in this browser');
-        camOn = false;
-        return;
-      }
-      if(!window.isSecureContext){
-        showStatus('Camera requires a secure context (HTTPS) or localhost.');
-        camOn = false;
-        return;
-      }
-      showStatus('Requesting camera…');
+      // Return true if camera starts successfully
       try{
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false
-        });
+        if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+          showStatus('Camera API not supported in this browser.');
+          camOn = false; return false;
+        }
+        if(location.protocol === 'file:'){
+          showStatus('Camera blocked on file://. Please use https:// or http://localhost.');
+          camOn = false; return false;
+        }
+        if(!window.isSecureContext){
+          showStatus('Camera requires a secure context (HTTPS) or localhost.');
+          camOn = false; return false;
+        }
+
+        // Stop any existing stream before starting a new one
+        try{ if(stream){ stream.getTracks().forEach(t=>t.stop()); } }catch{}
+
+        showStatus('Requesting camera…');
+        const constraintsPrimary = { video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio:false };
+        try{
+          stream = await navigator.mediaDevices.getUserMedia(constraintsPrimary);
+        }catch(err){
+          // Fallback to basic constraints if overconstrained
+          if(err && err.name === 'OverconstrainedError'){
+            stream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
+          } else { throw err; }
+        }
+
         video.srcObject = stream;
-        await video.play();
-        camOn = true;
+        try{ await video.play(); }catch(_){ /* Some browsers need a gesture; handled below */ }
+
         const ready = ()=>{
           aspect = video.videoWidth && video.videoHeight ? (video.videoWidth / video.videoHeight) : 16/9;
           stage.style.aspectRatio = aspect.toFixed(4);
           hideStatus();
           fitCanvas();
+          camOn = true;
           if(animId === null){ animId = requestAnimationFrame(tick); }
         };
         if(video.readyState >= 2){ ready(); } else { video.onloadedmetadata = ready; }
+        return true;
       }catch(err){
         console.error(err);
         camOn = false;
-        showStatus('Camera error: ' + (err.message || err.name || err));
+        if(err && (err.name === 'NotAllowedError' || err.name === 'SecurityError')){
+          showStatus('Camera permission denied. Check site permissions and reload.');
+        } else if(err && err.name === 'NotFoundError'){
+          showStatus('No camera found on this device.');
+        } else {
+          showStatus('Camera error: ' + (err.message || err.name || err));
+        }
+        return false;
       }
     }
+
     function stopCamera(){
       try{
         if(stream){ stream.getTracks().forEach(t=>t.stop()); }
@@ -312,12 +340,24 @@
       lastFrame = null;
       if(animId !== null){ cancelAnimationFrame(animId); animId = null; }
       showStatus('Camera off');
+    }catch(e){}
+      video.srcObject = null;
+      camOn = false;
+      lastFrame = null;
+      if(animId !== null){ cancelAnimationFrame(animId); animId = null; }
+      showStatus('Camera off');
     }
     // Try to start immediately, and also on first user interaction (helps Safari)
-    startCamera();
+    startCamera().then(updateCamBtn);
     const oneShotStart = async ()=>{ if(!camOn){ await startCamera(); } };
     window.addEventListener('pointerdown', oneShotStart, { once:true });
     window.addEventListener('keydown', oneShotStart, { once:true });
+    statusBox.addEventListener('click', async ()=>{ if(!camOn){ await startCamera(); updateCamBtn(); } });
+
+    function updateCamBtn(){
+      controls.camBtn.textContent = 'Camera: ' + (camOn ? 'On' : 'Off');
+      controls.camBtn.setAttribute('aria-pressed', camOn ? 'true' : 'false');
+    }
   </script>
 </body>
 </html>
