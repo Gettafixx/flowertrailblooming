@@ -206,6 +206,7 @@
     let running = true;
     let camOn = true;
     let stream = null;
+    let animId = null;
     let camOn = true;
     let stream = null;
     let lastFrame = null; // ImageData
@@ -274,6 +275,11 @@
         camOn = false;
         return;
       }
+      if(!window.isSecureContext){
+        showStatus('Camera requires a secure context (HTTPS) or localhost.');
+        camOn = false;
+        return;
+      }
       showStatus('Requesting camera…');
       try{
         stream = await navigator.mediaDevices.getUserMedia({
@@ -283,11 +289,14 @@
         video.srcObject = stream;
         await video.play();
         camOn = true;
-        aspect = video.videoWidth && video.videoHeight ? (video.videoWidth / video.videoHeight) : 16/9;
-        stage.style.aspectRatio = aspect.toFixed(4);
-        hideStatus();
-        fitCanvas();
-        requestAnimationFrame(tick);
+        const ready = ()=>{
+          aspect = video.videoWidth && video.videoHeight ? (video.videoWidth / video.videoHeight) : 16/9;
+          stage.style.aspectRatio = aspect.toFixed(4);
+          hideStatus();
+          fitCanvas();
+          if(animId === null){ animId = requestAnimationFrame(tick); }
+        };
+        if(video.readyState >= 2){ ready(); } else { video.onloadedmetadata = ready; }
       }catch(err){
         console.error(err);
         camOn = false;
@@ -300,9 +309,15 @@
       }catch(e){}
       video.srcObject = null;
       camOn = false;
+      lastFrame = null;
+      if(animId !== null){ cancelAnimationFrame(animId); animId = null; }
       showStatus('Camera off');
     }
+    // Try to start immediately, and also on first user interaction (helps Safari)
     startCamera();
+    const oneShotStart = async ()=>{ if(!camOn){ await startCamera(); } };
+    window.addEventListener('pointerdown', oneShotStart, { once:true });
+    window.addEventListener('keydown', oneShotStart, { once:true });
   </script>
 </body>
 </html>
