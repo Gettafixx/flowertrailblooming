@@ -285,15 +285,25 @@
           showStatus('Camera blocked on file://. Please use https:// or http://localhost.');
           camOn = false; return false;
         }
-        if(!window.isSecureContext){
-          showStatus('Camera requires a secure context (HTTPS) or localhost.');
-          camOn = false; return false;
+        if(!window.isSecureContext && location.hostname !== 'localhost'){
+          // Don’t abort — some preview environments still work. Warn and try anyway.
+          showStatus('Not a secure context; camera may be blocked. Trying anyway… (prefer https:// or http://localhost)');
         }
 
         // Stop any existing stream before starting a new one
         try{ if(stream){ stream.getTracks().forEach(t=>t.stop()); } }catch{}
 
         showStatus('Requesting camera…');
+        // Optional: check permission state where supported
+        try{
+          if(navigator.permissions && navigator.permissions.query){
+            navigator.permissions.query({ name: 'camera' }).then(p => {
+              if(p.state === 'denied'){
+                showStatus('Camera permission is blocked. Click the address bar lock icon > Permissions, allow camera, then reload.');
+              }
+            }).catch(()=>{});
+          }
+        }catch(_){}
         const constraintsPrimary = { video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio:false };
         try{
           stream = await navigator.mediaDevices.getUserMedia(constraintsPrimary);
