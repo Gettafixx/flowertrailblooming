@@ -1,373 +1,515 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Motion Bloom Cam</title>
+  <title>Webcam Motion Flowers</title>
   <style>
     :root{
-      --bg:#0b1020;
-      --panel:#10182dcc;
-      --accent:#7dd3fc;
-      --text:#e6eefc;
-      --muted:#9fb2d8;
-      --btn:#1f2a48;
-      --btnHover:#2a3963;
-      --shadow: 0 20px 60px rgba(0,0,0,.35);
+      --bg: #000000;             /* background color (change via color input) */
+      --ui: rgba(20,20,28,.72);  /* control panel backdrop */
+      --ui-border: rgba(255,255,255,.12);
+      --accent: #9AE6B4;         /* minty accent */
     }
-    *{box-sizing:border-box}
-    html,body{height:100%}
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body{
-      margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
-      color:var(--text); background:
-        radial-gradient(1200px 600px at 85% 20%, #1a1f3e, transparent 60%),
-        radial-gradient(800px 500px at 20% 70%, #10223a, transparent 60%),
-        var(--bg);
-      overflow:hidden; /* keep things tidy when fullscreen */
-    }
-    .app{display:flex; flex-direction:column; gap:14px; height:100%; padding:16px;}
-
-    .stage{position:relative; flex:1 1 auto; min-height:320px; border-radius:18px; overflow:hidden; background:#050813; box-shadow:var(--shadow);}
-    .stage::after{ /* subtle vignette */
-      content:""; position:absolute; inset:0; pointer-events:none;
-      background: radial-gradient(60% 80% at 50% 50%, transparent 40%, rgba(0,0,0,.35));
+      margin:0; height:100%; overflow:hidden;
+      background: var(--bg); color: #e5e7eb; font: 14px/1.35 system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
     }
 
-    #display{position:absolute; inset:0; width:100%; height:100%; display:block; background: var(--userBg, #000);}
-    #blooms{position:absolute; inset:0; pointer-events:none;}
+    /* Stage */
+    .stage{ position:fixed; inset:0; display:grid; place-items:center; }
+    .videoWrap{ position:relative; width:100vw; height:100vh; }
 
-    .status{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
-      background:linear-gradient(180deg, #14203b, #0e162e); border:1px solid #243154; color:var(--text);
-      padding:14px 16px; border-radius:14px; box-shadow:var(--shadow); font-size:14px; display:none;}
-    .status.show{display:flex; align-items:center; gap:10px; cursor:pointer}
-    .status .dot{width:10px;height:10px;border-radius:50%;background:#7dd3fc; box-shadow:0 0 18px #7dd3fc99}
-
-    .ui{position:relative; z-index:3; display:flex; flex-direction:column; gap:10px;}
-    .controls{display:grid; grid-template-columns: repeat( auto-fit, minmax(200px, 1fr) ); gap:10px; background:var(--panel);
-      backdrop-filter: blur(10px); border:1px solid #1f2b4d; padding:12px; border-radius:14px; box-shadow:var(--shadow);}
-    .group{display:grid; grid-template-columns: 1fr auto; align-items:center; gap:8px;}
-    .group label{font-size:12px; color:var(--muted)}
-    .group input[type="range"]{width:100%; accent-color:var(--accent)}
-    .group output{font-variant-numeric: tabular-nums; font-size:12px; color:#bcd0f8; padding:2px 8px; background:#0b1530; border:1px solid #1f2b4d; border-radius:10px;}
-
-    .buttons{display:flex; gap:8px; flex-wrap:wrap}
-    .btn{appearance:none; border:1px solid #243154; background:linear-gradient(180deg, var(--btn), #162144);
-      color:var(--text); padding:10px 12px; border-radius:12px; cursor:pointer; font-weight:600; letter-spacing:.2px; box-shadow:var(--shadow);
-      transition:.2s transform, .2s background;
+    video{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:.18; filter: saturate(.9) contrast(1.1) brightness(.95);
+      transform: translateZ(0); /* promote to its own layer */
     }
-    .btn:hover{background:var(--btnHover); transform:translateY(-1px)}
-    .btn:active{transform:translateY(0)}
+    video.mirror{ transform: scaleX(-1); }
 
-    .show-ui{position:fixed; right:14px; bottom:14px; z-index:50}
+    /* Flowers layer sits on top of video */
+    .flowers{ position:absolute; inset:0; pointer-events:none; }
 
-    /* Flowers */
-    .flower{position:absolute; transform: translate(-50%,-50%) rotate(var(--rot,0deg));
-      filter: drop-shadow(0 4px 12px rgba(0,0,0,.45)); opacity:0; will-change: transform, opacity; pointer-events:none;
-      animation: bloom var(--life,3s) ease-out forwards;}
+    /* Each flower is its own absolutely-positioned element */
+    .flower{ position:absolute; will-change: transform, opacity; filter: drop-shadow(0 2px 6px rgba(0,0,0,.5)); }
 
-    @keyframes bloom{
-      0%   { transform: translate(-50%,-50%) rotate(var(--rot,0deg)) scale(.2); opacity:0}
-      15%  { transform: translate(-50%,-50%) rotate(var(--rot,0deg)) scale(1.2); opacity:1}
-      30%  { transform: translate(-50%,-50%) rotate(var(--rot,0deg)) scale(1)}
-      85%  { opacity:1 }
-      100% { opacity:0 }
+    @keyframes bloom {
+      0%   { transform: translate(-50%,-50%) scale(0); opacity: 0; }
+      12%  { transform: translate(-50%,-50%) scale(1); opacity: 1; }
+      80%  { transform: translate(-50%,-50%) scale(1.02); opacity: 1; }
+      100% { transform: translate(-50%,-50%) scale(1.15); opacity: 0; }
     }
 
-    /* Hide UI state */
-    .ui.hidden{display:none}
+    /* Controls */
+    .panel{ position:fixed; top:16px; left:16px; max-width: min(92vw, 420px); z-index:5; }
+    .card{ backdrop-filter: blur(10px) saturate(1.2); background: var(--ui); border:1px solid var(--ui-border); border-radius:16px; box-shadow: 0 8px 30px rgba(0,0,0,.35); padding:14px 14px 10px; }
+    .row{ display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center; margin:8px 0; }
+    .row > label{ font-size:12px; opacity:.9; }
+    .row .value{ font-variant-numeric: tabular-nums; opacity:.85; }
 
-    /* Small helper text */
-    .hint{font-size:12px; color:#9fb2d8; opacity:.8}
+    .slider{ appearance:none; width:100%; height:6px; border-radius:999px; background: linear-gradient(90deg, #6ee7b7, #a78bfa, #f472b6); outline:none; opacity:.95; }
+    .slider::-webkit-slider-thumb{ appearance:none; width:18px; height:18px; border-radius:50%; border:2px solid rgba(255,255,255,.8); background:#111; box-shadow:0 1px 6px rgba(0,0,0,.35); cursor:pointer; }
+    .slider::-moz-range-thumb{ width:18px; height:18px; border:none; border-radius:50%; background:#111; cursor:pointer; }
+
+    .btns{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+    .btn{ cursor:pointer; user-select:none; padding:10px 12px; border-radius:12px; border:1px solid var(--ui-border); background:#0f1117; color:#e5e7eb; letter-spacing:.2px; transition:.18s ease; display:inline-flex; align-items:center; gap:8px; }
+    .btn:hover{ transform: translateY(-1px); background:#121520; }
+    .btn:active{ transform: translateY(0); }
+    .btn.secondary{ background: #141826; }
+    .btn.success{ background:#062814; border-color: rgba(154,230,180,.5); }
+    .btn.warn{ background:#2a1a1a; }
+
+    .tiny{ font-size:11px; opacity:.7; margin-top:8px; }
+
+    /* Hide/Show UI */
+    .hideToggle{ position:fixed; top:14px; right:16px; z-index:6; }
+    .hideToggle .btn{ padding:8px 10px; }
+
+    .hiddenUI .panel{ display:none; }
+
+    /* Small on-screen starting prompt */
+    .gate{ position:fixed; inset:0; display:grid; place-items:center; background: radial-gradient(1200px 600px at 50% 0%, rgba(255,255,255,.06), rgba(0,0,0,.0)), linear-gradient(#0008,#0008);
+      z-index:9; }
+    .gate .card{ text-align:center; }
+    .gate h1{ font-size:20px; margin:6px 0 10px; }
+    .gate p{ margin:0 0 12px; opacity:.85; }
+
+    /* Color input styling */
+    .colorPick{ display:flex; align-items:center; gap:8px; }
+    .colorPick input[type="color"]{ width:32px; height:24px; border:none; background:none; padding:0; }
+
+    /* Footer help */
+    .help{ position:fixed; left:16px; bottom:12px; font-size:12px; opacity:.7; }
+
+    /* Accessibility: prefer reduced motion */
+    @media (prefers-reduced-motion: reduce){
+      .flower{ animation-duration: 400ms !important; }
+      video{ opacity:.10; }
+    }
   </style>
 </head>
 <body>
-  <div class="app" id="app">
-    <div class="stage" id="stage" aria-label="Camera stage">
-      <canvas id="display"></canvas>
-      <canvas id="buffer" width="0" height="0" style="display:none"></canvas>
-      <canvas id="buffer" width="0" height="0" style="display:none"></canvas>
-      <div id="blooms" aria-hidden="true"></div>
-      <div id="status" class="status"><span class="dot"></span> <span id="statusText">Requesting camera…</span></div>
-    </div>
+  <!-- SVG flower library (defs only; instanced at runtime with <use>) -->
+  <svg width="0" height="0" style="position:absolute;">
+    <defs>
+      <radialGradient id="g1" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#fff8"/>
+        <stop offset="50%" stop-color="#ffe08a"/>
+        <stop offset="100%" stop-color="#f59e0b"/>
+      </radialGradient>
+      <radialGradient id="g2" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#fff8"/>
+        <stop offset="60%" stop-color="#fb7185"/>
+        <stop offset="100%" stop-color="#be123c"/>
+      </radialGradient>
+      <radialGradient id="g3" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#cffafe"/>
+        <stop offset="60%" stop-color="#38bdf8"/>
+        <stop offset="100%" stop-color="#1d4ed8"/>
+      </radialGradient>
+      <radialGradient id="g4" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#fdf4ff"/>
+        <stop offset="50%" stop-color="#d946ef"/>
+        <stop offset="100%" stop-color="#7e22ce"/>
+      </radialGradient>
+      <radialGradient id="g5" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#ecfccb"/>
+        <stop offset="55%" stop-color="#84cc16"/>
+        <stop offset="100%" stop-color="#166534"/>
+      </radialGradient>
 
-    <div id="ui" class="ui" role="region" aria-label="Controls">
-      <div class="controls">
-        <div class="group">
-          <label for="sensitivity">Sensitivity</label>
-          <input id="sensitivity" type="range" min="10" max="300" value="70" step="1" />
-          <output id="sensitivityOut">70</output>
-        </div>
-        <div class="group">
-          <label for="lifetime">Flower lifetime (s)</label>
-          <input id="lifetime" type="range" min="0.5" max="10" value="3" step="0.5" />
-          <output id="lifetimeOut">3.0s</output>
-        </div>
-        <div class="group">
-          <label for="maxPerFrame">Max flowers / frame</label>
-          <input id="maxPerFrame" type="range" min="0" max="30" value="7" step="1" />
-          <output id="maxPerFrameOut">7</output>
-        </div>
-        <div class="group">
-          <label for="step">Motion sampling step (px)</label>
-          <input id="step" type="range" min="4" max="40" value="12" step="1" />
-          <output id="stepOut">12px</output>
-        </div>
-        <div class="group">
-          <label for="density">Bloom density</label>
-          <input id="density" type="range" min="0" max="100" value="25" step="1" />
-          <output id="densityOut">25%</output>
-        </div>
-        <div class="group">
-          <label for="size">Flower size (px)</label>
-          <input id="size" type="range" min="24" max="180" value="90" step="2" />
-          <output id="sizeOut">90px</output>
-        </div>
-        <div class="group">
-          <label for="radius">Bloom radius (px)</label>
-          <input id="radius" type="range" min="0" max="160" value="60" step="2" />
-          <output id="radiusOut">60px</output>
-        </div>
-        <div class="group">
-          <label for="fps">Process FPS</label>
-          <input id="fps" type="range" min="8" max="60" value="24" step="1" />
-          <output id="fpsOut">24</output>
-        </div>
-        <div class="group">
-          <label for="blur">Smoothing (blur px)</label>
-          <input id="blur" type="range" min="0" max="3" value="1" step="1" />
-          <output id="blurOut">1px</output>
-        </div>
-        <div class="group">
-          <label for="bgcolor">Background color</label>
-          <input id="bgcolor" type="color" value="#000000" />
-          <output id="bgcolorOut">#000000</output>
-        </div>
-        <div class="group">
-          <label for="bgcolor">Background color</label>
-          <input id="bgcolor" type="color" value="#000000" />
-          <output id="bgcolorOut">#000000</output>
-        </div>
-      </div>
-      <div class="buttons">
-        <button id="toggleMirror" class="btn" aria-pressed="true">Mirror: On<\/button>
-        <button id="toggleCam" class="btn" aria-pressed="true">Camera: On<\/button>
-        <button id="togglePause" class="btn" aria-pressed="false">Pause</button>
-        <button id="clearBtn" class="btn">Clear</button>
-        <button id="hideUiBtn" class="btn">Hide UI</button>
-        <button id="fsBtn" class="btn" title="Toggle Fullscreen">Fullscreen ⛶</button>
-      </div>
-      <div class="hint">Tip: move your hand near the camera. Flowers spawn around motion and fade after the chosen time.</div>
-    </div>
+      <!-- Daisy -->
+      <symbol id="flower-daisy" viewBox="-50 -50 100 100">
+        <g>
+          <g fill="url(#g1)">
+            <ellipse rx="12" ry="28" transform="rotate(0)"/>
+            <ellipse rx="12" ry="28" transform="rotate(30)"/>
+            <ellipse rx="12" ry="28" transform="rotate(60)"/>
+            <ellipse rx="12" ry="28" transform="rotate(90)"/>
+            <ellipse rx="12" ry="28" transform="rotate(120)"/>
+            <ellipse rx="12" ry="28" transform="rotate(150)"/>
+          </g>
+          <circle r="12" fill="#f59e0b" stroke="#fde68a" stroke-width="2"/>
+        </g>
+      </symbol>
 
-    <button id="showUiBtn" class="btn show-ui" hidden>Show UI</button>
+      <!-- Sakura (cherry blossom) -->
+      <symbol id="flower-sakura" viewBox="-50 -50 100 100">
+        <g>
+          <path fill="url(#g4)" d="M0-35c10 0 18 8 18 18 0 5-2 10-5 13 5-1 10-1 15 1 10 4 15 15 11 25-3 7-10 12-18 12-5 0-9-2-13-5 1 5 1 10-1 15-4 10-15 15-25 11-7-3-12-10-12-18 0-5 2-9 5-13-5 1-10 1-15-1-10-4-15-15-11-25 3-7 10-12 18-12 5 0 9 2 13 5-1-5-1-10 1-15 4-10 15-15 25-11z"/>
+          <circle r="6" fill="#fff7"/>
+        </g>
+      </symbol>
+
+      <!-- Sunflower -->
+      <symbol id="flower-sun" viewBox="-50 -50 100 100">
+        <g>
+          <g fill="url(#g1)">
+            <path d="M0-40 9-22 28-28 18-9 40 0 18 9 28 28 9 22 0 40 -9 22 -28 28 -18 9 -40 0 -18 -9 -28 -28 -9 -22z"/>
+          </g>
+          <circle r="14" fill="#92400e" stroke="#f59e0b" stroke-width="2"/>
+        </g>
+      </symbol>
+
+      <!-- Lotus -->
+      <symbol id="flower-lotus" viewBox="-50 -50 100 100">
+        <g fill="url(#g5)">
+          <path d="M0-32C6-20 14-16 22-12 10-10 4-4 0 4 -4-4 -10-10 -22-12 -14-16 -6-20 0-32z"/>
+          <path d="M0-10C10-6 18-2 28 8 14 6 6 12 0 20 -6 12 -14 6 -28 8 -18-2 -10-6 0-10z"/>
+          <path d="M0-22C8-18 16-14 24-10 12-8 6-2 0 6 -6-2 -12-8 -24-10 -16-14 -8-18 0-22z"/>
+          <circle r="6" fill="#bbf7d0"/>
+        </g>
+      </symbol>
+
+      <!-- Tulip -->
+      <symbol id="flower-tulip" viewBox="-50 -50 100 100">
+        <g fill="url(#g3)">
+          <path d="M-18-8c6-12 12-18 18-26 6 8 12 14 18 26 6 12-4 28-18 28S-24 4-18-8z"/>
+          <path d="M-6-26c3 6 6 10 6 16 0-6 3-10 6-16 3 6 6 10 6 18 0 10-6 20-12 20S-6 2-6-8c0-8 3-12 6-18z" fill="#0ea5e9" opacity=".35"/>
+          <circle r="6" fill="#e0f2fe"/>
+        </g>
+      </symbol>
+
+      <!-- Poppy -->
+      <symbol id="flower-poppy" viewBox="-50 -50 100 100">
+        <g>
+          <path fill="url(#g2)" d="M0-40c12 0 20 10 20 22 0 6-2 12-6 16 8-2 18 4 22 12 4 8 0 20-8 24-10 6-22 2-28-6-6 8-18 12-28 6-8-4-12-16-8-24 4-8 14-14 22-12-4-4-6-10-6-16 0-12 8-22 20-22z"/>
+          <circle r="10" fill="#111" stroke="#fecdd3" stroke-width="2"/>
+        </g>
+      </symbol>
+
+      <!-- Bluebell-ish -->
+      <symbol id="flower-bell" viewBox="-50 -50 100 100">
+        <g fill="url(#g3)">
+          <path d="M0-12c14 0 22 10 28 20-10-4-18 0-28 6-10-6-18-10-28-6 6-10 14-20 28-20z"/>
+          <circle r="6" fill="#cffafe"/>
+        </g>
+      </symbol>
+
+      <!-- Rose rosette -->
+      <symbol id="flower-rose" viewBox="-50 -50 100 100">
+        <g fill="url(#g2)">
+          <path d="M0-28c12 0 22 10 22 22S12 16 0 16s-22-10-22-22S-12-28 0-28zm0 6c-8 0-14 6-14 14s6 14 14 14 14-6 14-14-6-14-14-14z"/>
+          <circle r="5" fill="#fee2e2"/>
+        </g>
+      </symbol>
+    </defs>
+  </svg>
+
+  <div class="stage">
+    <div class="videoWrap" id="videoWrap">
+      <video id="video" autoplay playsinline muted></video>
+      <div class="flowers" id="flowers"></div>
+    </div>
   </div>
 
-  <!-- Hidden video just for capture -->
-  <video id="video" autoplay playsinline muted style="display:none"></video>
+  <!-- UI -->
+  <div class="panel">
+    <div class="card">
+      <div style="display:flex; align-items:center; gap:10px; justify-content:space-between;">
+        <strong style="letter-spacing:.3px;">🌸 Motion Flowers</strong>
+        <div class="colorPick"><label for="bgColor" title="Background color">BG</label><input id="bgColor" type="color" value="#000000" /></div>
+      </div>
+
+      <div class="row"><label>Lifetime (s)</label><span class="value" id="lifeOut">3.0</span></div>
+      <input class="slider" type="range" id="life" min="0.5" max="10" step="0.1" value="3" />
+
+      <div class="row"><label>Sensitivity</label><span class="value" id="sensOut">40</span></div>
+      <input class="slider" type="range" id="sens" min="10" max="100" step="1" value="40" />
+
+      <div class="row"><label>Blur (px)</label><span class="value" id="blurOut">1</span></div>
+      <input class="slider" type="range" id="blur" min="0" max="4" step="0.5" value="1" />
+
+      <div class="row"><label>Detection width (px)</label><span class="value" id="resOut">160</span></div>
+      <input class="slider" type="range" id="res" min="80" max="360" step="20" value="160" />
+
+      <div class="row"><label>Max flowers / frame</label><span class="value" id="densityOut">8</span></div>
+      <input class="slider" type="range" id="density" min="1" max="40" step="1" value="8" />
+
+      <div class="row"><label>Spawn cooldown (ms)</label><span class="value" id="coolOut">220</span></div>
+      <input class="slider" type="range" id="cool" min="0" max="800" step="20" value="220" />
+
+      <div class="row"><label>Base size (px)</label><span class="value" id="sizeOut">48</span></div>
+      <input class="slider" type="range" id="size" min="20" max="120" step="2" value="48" />
+
+      <div class="btns">
+        <button class="btn success" id="startBtn">▶ Start camera</button>
+        <button class="btn" id="pauseBtn">⏸️ Pause</button>
+        <button class="btn" id="mirrorBtn">⇄ Mirror</button>
+        <button class="btn" id="fsBtn">⛶ Fullscreen</button>
+        <button class="btn secondary" id="clearBtn">🧹 Clear</button>
+        <button class="btn secondary" id="videoToggle">🎥 Toggle Video</button>
+      </div>
+      <div class="tiny">Shortcuts: <b>H</b> toggle UI • <b>M</b> mirror • <b>F</b> fullscreen • <b>Space</b> pause</div>
+    </div>
+  </div>
+
+  <div class="hideToggle"><button class="btn" id="hideBtn">🙈 Hide UI</button></div>
+
+  <div class="help">Tip: Move your hand in front of the camera—flowers will bloom where motion is detected.</div>
+
+  <!-- Start gate (shown until user starts camera) -->
+  <div class="gate" id="gate">
+    <div class="card">
+      <h1>🌼 Webcam Motion Flowers</h1>
+      <p>Click Start to grant camera access. Flowers will bloom where motion is detected and fade after the chosen time.</p>
+      <div class="btns" style="justify-content:center;">
+        <button class="btn success" id="gateStart">▶ Start camera</button>
+        <button class="btn secondary" id="gateNoVid">Use without showing video</button>
+      </div>
+    </div>
+  </div>
+
+  <canvas id="proc" hidden></canvas>
 
   <script>
   (function(){
     const video = document.getElementById('video');
-    const stage = document.getElementById('stage');
-    const canvas = document.getElementById('display');
-    const ctx = canvas.getContext('2d', { willReadFrequently:true });
-    const buffer = document.getElementById('buffer');
-    const bctx = buffer.getContext('2d', { willReadFrequently:true });
-    const blooms = document.getElementById('blooms');
-    const statusBox = document.getElementById('status');
-    const statusText = document.getElementById('statusText');
+    const flowersLayer = document.getElementById('flowers');
+    const proc = document.getElementById('proc');
+    const pctx = proc.getContext('2d', { willReadFrequently: true });
 
-    // Controls
-    const controls = {
-      sensitivity: bindSlider('sensitivity','sensitivityOut', v=>v),
-      lifetime: bindSlider('lifetime','lifetimeOut', v=>Number(v).toFixed(1)+"s"),
-      maxPerFrame: bindSlider('maxPerFrame','maxPerFrameOut', v=>v),
-      step: bindSlider('step','stepOut', v=>v+"px"),
-      density: bindSlider('density','densityOut', v=>v+"%"),
-      size: bindSlider('size','sizeOut', v=>v+"px"),
-      radius: bindSlider('radius','radiusOut', v=>v+"px"),
-      fps: bindSlider('fps','fpsOut', v=>v),
-      blur: bindSlider('blur','blurOut', v=>v+"px"),
-      bgcolor: bindColor('bgcolor','bgcolorOut'),
-      bgcolor: bindColor('bgcolor','bgcolorOut'),
-      mirrorBtn: document.getElementById('toggleMirror'),
-      camBtn: document.getElementById('toggleCam'),
-      camBtn: document.getElementById('toggleCam'),
-      pauseBtn: document.getElementById('togglePause'),
-      clearBtn: document.getElementById('clearBtn'),
-      hideUiBtn: document.getElementById('hideUiBtn'),
-      fsBtn: document.getElementById('fsBtn'),
-      ui: document.getElementById('ui'),
-      showUiBtn: document.getElementById('showUiBtn'),
-    };
+    // UI elements
+    const gate = document.getElementById('gate');
+    const startBtn = document.getElementById('startBtn');
+    const gateStart = document.getElementById('gateStart');
+    const gateNoVid = document.getElementById('gateNoVid');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const mirrorBtn = document.getElementById('mirrorBtn');
+    const fsBtn = document.getElementById('fsBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const videoToggle = document.getElementById('videoToggle');
+    const hideBtn = document.getElementById('hideBtn');
 
-    // State
-    let mirror = true;
+    const bgColor = document.getElementById('bgColor');
+    const life = document.getElementById('life');
+    const sens = document.getElementById('sens');
+    const blur = document.getElementById('blur');
+    const res = document.getElementById('res');
+    const density = document.getElementById('density');
+    const cool = document.getElementById('cool');
+    const size = document.getElementById('size');
+
+    const lifeOut = document.getElementById('lifeOut');
+    const sensOut = document.getElementById('sensOut');
+    const blurOut = document.getElementById('blurOut');
+    const resOut = document.getElementById('resOut');
+    const densityOut = document.getElementById('densityOut');
+    const coolOut = document.getElementById('coolOut');
+    const sizeOut = document.getElementById('sizeOut');
+
     let running = true;
-    let camOn = true;
-    let stream = null;
-    let animId = null;
-    let camOn = true;
-    let stream = null;
-    let lastFrame = null; // ImageData
-    let lastTick = 0;
-    let aspect = 16/9;
+    let mirrored = false;
+    let showVideo = true;
+    let streamActive = false;
 
-    // Restore previous settings if any
-    restoreSettings();
+    const flowerIds = [
+      'flower-daisy','flower-sakura','flower-sun','flower-lotus','flower-tulip','flower-poppy','flower-bell','flower-rose'
+    ];
 
-    // Wire buttons
-    controls.mirrorBtn.addEventListener('click', ()=>{
-      mirror = !mirror;
-      controls.mirrorBtn.textContent = `Mirror: ${mirror? 'On':'Off'}`;
-      controls.mirrorBtn.setAttribute('aria-pressed', String(mirror));
-    });
-    controls.pauseBtn.addEventListener('click', ()=>{
-      running = !running; controls.pauseBtn.textContent = running? 'Pause':'Resume';
-      controls.pauseBtn.setAttribute('aria-pressed', String(!running));
-    });
-    controls.camBtn.addEventListener('click', async ()=>{
-      if(camOn){
-        stopCamera();
-      } else {
-        await startCamera();
-      }
-      updateCamBtn();
-    });
-        controls.camBtn.textContent = 'Camera: Off';
-        controls.camBtn.setAttribute('aria-pressed','false');
-      } else {
-        await startCamera();
-        controls.camBtn.textContent = 'Camera: On';
-        controls.camBtn.setAttribute('aria-pressed','true');
-      }
-    });
-    controls.clearBtn.addEventListener('click', clearBlooms);
-    controls.hideUiBtn.addEventListener('click', ()=>{
-      controls.ui.classList.add('hidden');
-      controls.showUiBtn.hidden = false;
-    });
-    controls.showUiBtn.addEventListener('click', ()=>{
-      controls.ui.classList.remove('hidden');
-      controls.showUiBtn.hidden = true;
-    });
-    controls.fsBtn.addEventListener('click', async ()=>{
-      try{
-        if(!document.fullscreenElement){ await stage.requestFullscreen(); }
-        else { await document.exitFullscreen(); }
-      }catch(e){ console.warn(e); }
-    });
+    const cooldownMap = new Map();
 
-    // Resize canvas to stage
-    const resizeObserver = new ResizeObserver(()=> fitCanvas());
-    resizeObserver.observe(stage);
-
-    function fitCanvas(){
-      const rect = stage.getBoundingClientRect();
-      const w = Math.floor(rect.width), h = Math.floor(rect.height);
-      if(canvas.width !== w || canvas.height !== h){
-        canvas.width = w; canvas.height = h;
-        buffer.width = w; buffer.height = h;
-      }
+    function updateUIValues(){
+      lifeOut.textContent = Number(life.value).toFixed(1);
+      sensOut.textContent = sens.value;
+      blurOut.textContent = blur.value;
+      resOut.textContent = res.value;
+      densityOut.textContent = density.value;
+      coolOut.textContent = cool.value;
+      sizeOut.textContent = size.value;
     }
-    }
-    }
+    updateUIValues();
 
-    // Init camera
+    // Background color
+    bgColor.addEventListener('input', ()=>{
+      document.documentElement.style.setProperty('--bg', bgColor.value);
+    });
+
+    // Buttons
+    startBtn.addEventListener('click', startCamera);
+    gateStart.addEventListener('click', startCamera);
+    gateNoVid.addEventListener('click', ()=>{
+      gate.style.display = 'none';
+      showVideo = false; video.style.display = 'none';
+      if(!streamActive) startCamera();
+    });
+
+    pauseBtn.addEventListener('click', ()=>{
+      running = !running;
+      pauseBtn.textContent = running ? '⏸️ Pause' : '▶ Resume';
+    });
+
+    mirrorBtn.addEventListener('click', toggleMirror);
+
+    fsBtn.addEventListener('click', ()=>{
+      if(!document.fullscreenElement){ document.documentElement.requestFullscreen?.(); }
+      else{ document.exitFullscreen?.(); }
+    });
+
+    clearBtn.addEventListener('click', ()=>{ flowersLayer.innerHTML = ''; });
+
+    videoToggle.addEventListener('click', ()=>{
+      showVideo = !showVideo;
+      video.style.display = showVideo ? 'block' : 'none';
+    });
+
+    hideBtn.addEventListener('click', ()=>{
+      document.body.classList.toggle('hiddenUI');
+      hideBtn.textContent = document.body.classList.contains('hiddenUI') ? '🪄 Show UI' : '🙈 Hide UI';
+    });
+
+    // Slider outputs
+    [life, sens, blur, res, density, cool, size].forEach(el => el.addEventListener('input', updateUIValues));
+
+    // Keyboard shortcuts
+    window.addEventListener('keydown', (e)=>{
+      if(e.target && ['INPUT','TEXTAREA'].includes(e.target.tagName)) return;
+      if(e.code === 'Space'){ e.preventDefault(); pauseBtn.click(); }
+      if(e.key.toLowerCase() === 'm') mirrorBtn.click();
+      if(e.key.toLowerCase() === 'h') hideBtn.click();
+      if(e.key.toLowerCase() === 'f') fsBtn.click();
+    });
+
     async function startCamera(){
-      // Return true if camera starts successfully
       try{
-        if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-          showStatus('Camera API not supported in this browser.');
-          camOn = false; return false;
-        }
-        if(location.protocol === 'file:'){
-          showStatus('Camera blocked on file://. Please use https:// or http://localhost.');
-          camOn = false; return false;
-        }
-        if(!window.isSecureContext && location.hostname !== 'localhost'){
-          // Don’t abort — some preview environments still work. Warn and try anyway.
-          showStatus('Not a secure context; camera may be blocked. Trying anyway… (prefer https:// or http://localhost)');
-        }
-
-        // Stop any existing stream before starting a new one
-        try{ if(stream){ stream.getTracks().forEach(t=>t.stop()); } }catch{}
-
-        showStatus('Requesting camera…');
-        // Optional: check permission state where supported
-        try{
-          if(navigator.permissions && navigator.permissions.query){
-            navigator.permissions.query({ name: 'camera' }).then(p => {
-              if(p.state === 'denied'){
-                showStatus('Camera permission is blocked. Click the address bar lock icon > Permissions, allow camera, then reload.');
-              }
-            }).catch(()=>{});
-          }
-        }catch(_){}
-        const constraintsPrimary = { video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio:false };
-        try{
-          stream = await navigator.mediaDevices.getUserMedia(constraintsPrimary);
-        }catch(err){
-          // Fallback to basic constraints if overconstrained
-          if(err && err.name === 'OverconstrainedError'){
-            stream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
-          } else { throw err; }
-        }
-
-        video.srcObject = stream;
-        try{ await video.play(); }catch(_){ /* Some browsers need a gesture; handled below */ }
-
-        const ready = ()=>{
-          aspect = video.videoWidth && video.videoHeight ? (video.videoWidth / video.videoHeight) : 16/9;
-          stage.style.aspectRatio = aspect.toFixed(4);
-          hideStatus();
-          fitCanvas();
-          camOn = true;
-          if(animId === null){ animId = requestAnimationFrame(tick); }
-        };
-        if(video.readyState >= 2){ ready(); } else { video.onloadedmetadata = ready; }
-        return true;
+        gate.style.display = 'none';
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode:'user' }, audio:false });
+        video.srcObject = stream; streamActive = true;
+        await video.play();
+        // Kick off processing once we know dimensions
+        await new Promise(r => setTimeout(r, 50));
+        configureProcessing();
+        requestAnimationFrame(tick);
       }catch(err){
-        console.error(err);
-        camOn = false;
-        if(err && (err.name === 'NotAllowedError' || err.name === 'SecurityError')){
-          showStatus('Camera permission denied. Check site permissions and reload.');
-        } else if(err && err.name === 'NotFoundError'){
-          showStatus('No camera found on this device.');
-        } else {
-          showStatus('Camera error: ' + (err.message || err.name || err));
-        }
-        return false;
+        alert('Could not access camera: ' + err.message);
       }
     }
 
-    function stopCamera(){
-      try{
-        if(stream){ stream.getTracks().forEach(t=>t.stop()); }
-      }catch(e){}
-      video.srcObject = null;
-      camOn = false;
-      lastFrame = null;
-      if(animId !== null){ cancelAnimationFrame(animId); animId = null; }
-      showStatus('Camera off');
-    }catch(e){}
-      video.srcObject = null;
-      camOn = false;
-      lastFrame = null;
-      if(animId !== null){ cancelAnimationFrame(animId); animId = null; }
-      showStatus('Camera off');
+    function configureProcessing(){
+      // Detection canvas matches aspect ratio of the video at a downscaled width
+      const vW = video.videoWidth || 640;
+      const vH = video.videoHeight || 480;
+      const targetW = Math.max(40, Number(res.value)|0);
+      const targetH = Math.round(targetW * (vH / vW));
+      proc.width = targetW; proc.height = targetH;
     }
-    // Try to start immediately, and also on first user interaction (helps Safari)
-    startCamera().then(updateCamBtn);
-    const oneShotStart = async ()=>{ if(!camOn){ await startCamera(); } };
-    window.addEventListener('pointerdown', oneShotStart, { once:true });
-    window.addEventListener('keydown', oneShotStart, { once:true });
-    statusBox.addEventListener('click', async ()=>{ if(!camOn){ await startCamera(); updateCamBtn(); } });
 
-    function updateCamBtn(){
-      controls.camBtn.textContent = 'Camera: ' + (camOn ? 'On' : 'Off');
-      controls.camBtn.setAttribute('aria-pressed', camOn ? 'true' : 'false');
+    function toggleMirror(){
+      mirrored = !mirrored; video.classList.toggle('mirror', mirrored);
     }
+
+    function rand(min, max){ return Math.random() * (max - min) + min; }
+
+    function pick(arr){ return arr[(Math.random()*arr.length)|0]; }
+
+    function spawnFlower(px, py){
+      const base = Number(size.value);
+      const scale = rand(0.7, 1.4);
+      const rot = rand(-35, 35);
+      const id = pick(flowerIds);
+      const lifeMs = Math.round(Number(life.value) * 1000);
+
+      const el = document.createElementNS('http://www.w3.org/2000/svg','svg');
+      el.setAttribute('viewBox','0 0 100 100');
+      el.setAttribute('width', base*scale);
+      el.setAttribute('height', base*scale);
+      el.classList.add('flower');
+      el.style.left = px + 'px';
+      el.style.top  = py + 'px';
+      el.style.transform = `translate(-50%,-50%) rotate(${rot}deg)`;
+      el.style.animation = `bloom ${lifeMs}ms ease-out forwards`;
+      el.innerHTML = `<use href="#${id}" x="0" y="0" width="100" height="100"></use>`;
+      flowersLayer.appendChild(el);
+
+      setTimeout(()=>{ el.remove(); }, lifeMs + 60);
+    }
+
+    let prevFrame = null;
+    let lastConfigW = 0;
+
+    function tick(){
+      if(!running){ requestAnimationFrame(tick); return; }
+      if(!video.videoWidth){ requestAnimationFrame(tick); return; }
+
+      // Reconfigure if detection width changed
+      const resNow = Number(res.value);
+      if(resNow !== lastConfigW){ configureProcessing(); lastConfigW = resNow; }
+
+      // Draw current frame into processing canvas (downscaled + optional blur)
+      pctx.save();
+      const b = Number(blur.value);
+      pctx.filter = b > 0 ? `blur(${b}px)` : 'none';
+      pctx.drawImage(video, 0, 0, proc.width, proc.height);
+      pctx.restore();
+
+      const curr = pctx.getImageData(0, 0, proc.width, proc.height);
+      const data = curr.data;
+
+      if(!prevFrame){ prevFrame = curr; requestAnimationFrame(tick); return; }
+
+      const prev = prevFrame.data;
+      const w = proc.width, h = proc.height;
+      const threshold = Number(sens.value) * 3; // sum of RGB differences
+      const maxPerFrame = Number(density.value);
+      const now = performance.now();
+      const cooldownMs = Number(cool.value);
+
+      const hits = [];
+      const step = 2; // sample density (2 = check every other pixel)
+
+      for(let y=0; y<h; y+=step){
+        const row = y*w;
+        for(let x=0; x<w; x+=step){
+          const i = (row + x) * 4;
+          const dr = Math.abs(data[i]   - prev[i]);
+          const dg = Math.abs(data[i+1] - prev[i+1]);
+          const db = Math.abs(data[i+2] - prev[i+2]);
+          const diff = dr + dg + db;
+          if(diff > threshold){
+            // Apply cell-based cooldown to reduce bursts
+            const cell = ((x>>2) + ',' + (y>>2));
+            const last = cooldownMap.get(cell) || 0;
+            if(now - last > cooldownMs){
+              cooldownMap.set(cell, now);
+              hits.push({x, y});
+            }
+          }
+        }
+      }
+
+      // Spawn a subset of hits to limit work per frame
+      if(hits.length){
+        const rect = flowersLayer.getBoundingClientRect();
+        const sx = rect.width / w;
+        const sy = rect.height / h;
+        let count = Math.min(maxPerFrame, hits.length);
+        for(let n=0; n<count; n++){
+          const j = (Math.random()*hits.length)|0;
+          const pt = hits[j];
+          let px = pt.x * sx;
+          let py = pt.y * sy;
+          if(mirrored) px = rect.width - px;
+          spawnFlower(px, py);
+        }
+      }
+
+      prevFrame = curr; // next frame diff
+      requestAnimationFrame(tick);
+    }
+
+    // Resize observer to keep canvas mapping correct (not strictly required but nice)
+    const ro = new ResizeObserver(()=>{/* mapping uses getBoundingClientRect each frame */});
+    ro.observe(document.getElementById('videoWrap'));
+
+    // Start immediately if permissions previously granted
+    if(navigator.permissions && navigator.permissions.query){
+      navigator.permissions.query({ name:'camera' }).then(status=>{
+        if(status.state === 'granted'){ startCamera(); }
+      }).catch(()=>{});
+    }
+
+  })();
   </script>
 </body>
 </html>
